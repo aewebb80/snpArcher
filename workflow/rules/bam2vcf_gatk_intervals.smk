@@ -82,7 +82,7 @@ rule create_db_mapfile:
     TODO
     """
     input:
-        get_input_for_mapfile
+        get_norm_input_for_mapfile
     output:
         db_mapfile = "results/{refGenome}/genomics_db_import/DB_mapfile.txt"
     run:

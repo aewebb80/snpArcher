@@ -8,7 +8,7 @@ rule bam2gvcf:
         unpack(get_bams),
         ref = "results/{refGenome}/data/genome/{refGenome}.fna",
         indexes = expand("results/{{refGenome}}/data/genome/{{refGenome}}.fna.{ext}", ext=["sa", "pac", "bwt", "ann", "amb", "fai"]),
-        dictf = "results/{refGenome}/data/genome/{refGenome}.dict",
+        dictf = "results/{refGenome}/data/genome/{refGenome}.dict"
         
     output:
         gvcf = "results/{refGenome}/gvcfs/{sample}.g.vcf.gz",
@@ -49,10 +49,11 @@ rule create_db_mapfile:
 checkpoint prepare_db_intervals:
     """GenomicsDBImport needs list of intervals to operate on so this rule writes that file"""
     input:
-        fai = "results/{refGenome}/data/genome/{refGenome}.fna.fai",
+        fai = "results/{refGenome}/data/genome/{refGenome}.fna.fai"
     output:
-        intervals_dir = temp(directory("results/{refGenome}/genomics_db_import"))
+        intervals_dir = temp(directory("results/{refGenome}/genomics_db_import/intervals"))
     run:
+        os.makedirs(output.intervals_dir, exist_ok=True)
         with open(input.fai, "r") as f:
             for line in f:
                 line = line.strip().split()
@@ -66,15 +67,15 @@ rule gvcf2DB:
     """
     input:
         unpack(get_gvcfs_db),
-        db_mapfile = "results/{refGenome}/genomics_db_import/{chrom}.list",
-        intervals = "results/{refGenome}/genomics_db_import/db_intervals.list"
+        db_mapfile = "results/{refGenome}/genomics_db_import/DB_mapfile.txt",
+        intervals = "results/{refGenome}/genomics_db_import/intervals/{chrom}.list"
     output:
         db = temp(directory("results/{refGenome}/genomics_db_import/{chrom}_DB")),
         tar = temp("results/{refGenome}/genomics_db_import/{chrom}_DB.tar")
     log:
-        "logs/{refGenome}/gatk_db_import.txt"
+        "logs/{refGenome}/gatk_db_import.{chrom}.txt"
     benchmark:
-        "benchmarks/{refGenome}/gatk_db_import.txt"
+        "benchmarks/{refGenome}/gatk_db_import.{chrom}.txt"
     conda:
         "../envs/bam2vcf.yml"
     shell:
@@ -110,9 +111,9 @@ rule DB2vcf:
         het = config['het_prior'],
         db = lambda wc, input: input.db[:-4]
     log:
-        "logs/{refGenome}/gatk_genotype_gvcfs.txt"
+        "logs/{refGenome}/gatk_genotype_gvcfs.{chrom}.txt"
     benchmark:
-        "benchmarks/{refGenome}/gatk_genotype_gvcfs.txt"
+        "benchmarks/{refGenome}/gatk_genotype_gvcfs.{chrom}.txt"
     conda:
         "../envs/bam2vcf.yml"
     shell:
@@ -130,7 +131,7 @@ rule DB2vcf:
 
 def aggregate_chrom_vcfs (wildcards):
     checkpoint_output = checkpoints.prepare_db_intervals.get(**wildcards).output[0]
-    return expand('results/{refGenome}/vcfs/{chrom}.vcf.gz', chrom = glob_wildcards(os.path.join(checkpoint_output, "{chrom}.list")).chrom)
+    return expand('results/{refGenome}/vcfs/{chrom}.vcf.gz', refGenome = checkpoint_output.split(os.sep)[1], chrom = glob_wildcards(os.path.join(checkpoint_output,"{chrom}.list")).chrom)
 
 rule concatVcfs:
     input:
