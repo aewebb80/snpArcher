@@ -46,18 +46,18 @@ rule create_db_mapfile:
                 sample_name = os.path.basename(file_path).replace(".g.vcf.gz", "")
                 print(sample_name, file_path, sep="\t", file=f)
 
-rule prepare_db_intervals:
+checkpoint prepare_db_intervals:
     """GenomicsDBImport needs list of intervals to operate on so this rule writes that file"""
     input:
         fai = "results/{refGenome}/data/genome/{refGenome}.fna.fai",
     output:
-        intervals = "results/{refGenome}/genomics_db_import/db_intervals.list"
+        intervals_dir = temp(directory("results/{refGenome}/genomics_db_import"))
     run:
-        with open(output.intervals, "w") as out:
-            with open(input.fai, "r") as f:
-                for line in f:
-                    line = line.strip().split()
-                    chrom, end = line[0], line[1]
+        with open(input.fai, "r") as f:
+            for line in f:
+                line = line.strip().split()
+                chrom, end = line[0], line[1]
+                with open(os.path.join(output.intervals_dir, f"{chrom}.list"), "w") as out:
                     print(f"{chrom}:1-{end}", file=out)
 
 rule gvcf2DB:
@@ -66,11 +66,11 @@ rule gvcf2DB:
     """
     input:
         unpack(get_gvcfs_db),
-        db_mapfile = "results/{refGenome}/genomics_db_import/DB_mapfile.txt",
+        db_mapfile = "results/{refGenome}/genomics_db_import/{chrom}.list",
         intervals = "results/{refGenome}/genomics_db_import/db_intervals.list"
     output:
-        db = temp(directory("results/{refGenome}/genomics_db_import/DB")),
-        tar = temp("results/{refGenome}/genomics_db_import/DB.tar"),        
+        db = temp(directory("results/{refGenome}/genomics_db_import/{chrom}_DB")),
+        tar = temp("results/{refGenome}/genomics_db_import/{chrom}_DB.tar")
     log:
         "logs/{refGenome}/gatk_db_import.txt"
     benchmark:
@@ -101,11 +101,11 @@ rule DB2vcf:
     are still scattered.
     """
     input:
-        db = "results/{refGenome}/genomics_db_import/DB.tar",
-        ref = "results/{refGenome}/data/genome/{refGenome}.fna",
+        db = "results/{refGenome}/genomics_db_import/{chrom}_DB.tar",
+        ref = "results/{refGenome}/data/genome/{refGenome}.fna"
     output:
-        vcf = temp("results/{refGenome}/vcfs/raw.vcf.gz"),
-        vcfidx = temp("results/{refGenome}/vcfs/raw.vcf.gz.tbi"),
+        vcf = temp("results/{refGenome}/vcfs/{chrom}.vcf.gz"),
+        vcfidx = temp("results/{refGenome}/vcfs/{chrom}.vcf.gz.tbi")
     params:
         het = config['het_prior'],
         db = lambda wc, input: input.db[:-4]
@@ -126,6 +126,24 @@ rule DB2vcf:
             -V gendb://{params.db} \
             -O {output.vcf} \
             --tmp-dir {resources.tmpdir} &> {log}
+        """
+
+def aggregate_chrom_vcfs (wildcards):
+    checkpoint_output = checkpoints.prepare_db_intervals.get(**wildcards).output[0]
+    return expand('results/{refGenome}/vcfs/{chrom}.vcf.gz', chrom = glob_wildcards(os.path.join(checkpoint_output, "{chrom}.list")).chrom)
+
+rule concatVcfs:
+    input:
+        vcfs=aggregate_chrom_vcfs
+    output:
+        vcf = temp("results/{refGenome}/vcfs/raw.vcf.gz"),
+        vcfidx = temp("results/{refGenome}/vcfs/raw.vcf.gz.tbi")
+    conda:
+        "../envs/bcftools.yml"
+    shell:
+        """
+        bcftools concat -O z -o {output.vcf} {input.vcfs}
+        bcftools index --tbi {output.vcf}
         """
 
 rule filterVcfs:
